@@ -10,9 +10,9 @@ from typing import List, Union
 
 import pytest
 
-from conda_lock.conda_lock import run_lock
 from conda_lock.invoke_conda import is_micromamba
 from conda_lock.models.lock_spec import VersionedDependency
+from conda_lock.render import run_lock
 from conda_lock.src_parser import DEFAULT_PLATFORMS
 from conda_lock.src_parser.environment_yaml import parse_environment_file
 

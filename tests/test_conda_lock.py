@@ -29,29 +29,26 @@ from freezegun import freeze_time
 
 from conda_lock import __version__, pypi_solver
 from conda_lock.conda_lock import (
-    DEFAULT_FILES,
-    DEFAULT_LOCKFILE_NAME,
     _add_auth_to_line,
     _add_auth_to_lockfile,
     _extract_domain,
     _strip_auth_from_line,
     _strip_auth_from_lockfile,
-    create_lockfile_from_spec,
-    default_virtual_package_repodata,
-    determine_conda_executable,
-    extract_input_hash,
     main,
-    make_lock_spec,
-    run_lock,
 )
 from conda_lock.conda_solver import extract_json_object, fake_conda_environment
+from conda_lock.constants.filenames import DEFAULT_LOCKFILE_NAME, DEFAULT_SOURCE_FILES
 from conda_lock.errors import (
     ChannelAggregationError,
     MissingEnvVarError,
     PlatformValidationError,
 )
 from conda_lock.interfaces.vendored_conda import MatchSpec
-from conda_lock.invoke_conda import is_micromamba, reset_conda_pkgs_dir
+from conda_lock.invoke_conda import (
+    determine_conda_executable,
+    is_micromamba,
+    reset_conda_pkgs_dir,
+)
 from conda_lock.lockfile import parse_conda_lock_file
 from conda_lock.lockfile.v2prelim.models import (
     HashModel,
@@ -61,6 +58,12 @@ from conda_lock.lockfile.v2prelim.models import (
 from conda_lock.models.channel import Channel
 from conda_lock.models.lock_spec import VCSDependency, VersionedDependency
 from conda_lock.pypi_solver import _strip_auth, parse_pip_requirement, solve_pypi
+from conda_lock.render import (
+    create_lockfile_from_spec,
+    extract_input_hash,
+    make_lock_spec,
+    run_lock,
+)
 from conda_lock.src_parser import (
     DEFAULT_PLATFORMS,
     LockSpecification,
@@ -81,6 +84,7 @@ from conda_lock.src_parser.pyproject_toml import (
     parse_pyproject_toml,
     poetry_version_to_conda_version,
 )
+from conda_lock.virtual_package import default_virtual_package_repodata
 
 
 if typing.TYPE_CHECKING:
@@ -1238,8 +1242,8 @@ def test_run_lock_with_locked_environment_files(
     pre_environment = update_environment.parent / "environment-preupdate.yml"
     run_lock([pre_environment], conda_exe="mamba")
     make_lock_files = MagicMock()
-    monkeypatch.setattr("conda_lock.conda_lock.make_lock_files", make_lock_files)
-    run_lock(DEFAULT_FILES, conda_exe=conda_exe, update=["pydantic"])
+    monkeypatch.setattr("conda_lock.render.make_lock_files", make_lock_files)
+    run_lock(DEFAULT_SOURCE_FILES, conda_exe=conda_exe, update=["pydantic"])
     if sys.version_info < (3, 8):
         # backwards compat
         src_files = make_lock_files.call_args_list[0][1]["src_files"]
@@ -1269,9 +1273,12 @@ def test_run_lock_relative_source_path(
     locked_environment = lock_content.metadata.sources[0]
     assert Path(locked_environment) == Path("../sources/environment.yaml")
     make_lock_files = MagicMock()
-    monkeypatch.setattr("conda_lock.conda_lock.make_lock_files", make_lock_files)
+    monkeypatch.setattr("conda_lock.render.make_lock_files", make_lock_files)
     run_lock(
-        DEFAULT_FILES, lockfile_path=lockfile, conda_exe=conda_exe, update=["pydantic"]
+        DEFAULT_SOURCE_FILES,
+        lockfile_path=lockfile,
+        conda_exe=conda_exe,
+        update=["pydantic"],
     )
     if sys.version_info < (3, 8):
         # backwards compat
