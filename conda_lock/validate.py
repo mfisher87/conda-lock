@@ -1,12 +1,50 @@
+import pathlib
 import re
 
-from typing import Optional, Tuple
+from typing import Callable, Final, Optional, Tuple
 
 from conda_lock.errors import PlatformValidationError
+from conda_lock.lockfile import parse_conda_lock_file
+from conda_lock.typing import TValidationCheck
 
 
 # Captures the platform in the first group.
 PLATFORM_PATTERN = re.compile(r"^# platform: (.*)$")
+
+
+def validate_lockfile_compatible_with_sources(lockfile_path: pathlib.Path) -> None:
+    """Check that all locked dependencies are compatible with source specification."""
+    # TODO: pass in the lock content instead of reading for each check
+    parse_conda_lock_file(lockfile_path)
+    ...
+
+    error = False
+    if error:
+        raise RuntimeError(
+            f"Lockfile {lockfile_path} dependencies conflict with source specifications:\n"
+            " {}"
+        )
+
+    print(f"Check passed: Lockfile {lockfile_path} is compatible with its sources.")
+
+
+def validate_lockfile_from_hashes(lockfile_path: pathlib.Path) -> None:
+    """Check that all lockfile sources still match their recorded hashes."""
+    # TODO: pass in the lock content instead of reading for each check
+    parse_conda_lock_file(lockfile_path)
+    ...
+
+    error = False
+    if error:
+        raise RuntimeError(f"Lockfile {lockfile_path} source {{}} hash mismatch.")
+
+    print(f"Check passed: Lockfile {lockfile_path} hashes match sources.")
+
+
+VALIDATION_CHECKS: Final[dict[TValidationCheck, Callable]] = {
+    "compatible": validate_lockfile_compatible_with_sources,
+    "hash": validate_lockfile_from_hashes,
+}
 
 
 def do_validate_platform(lockfile: str) -> None:

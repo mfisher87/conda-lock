@@ -39,6 +39,7 @@ from conda_lock.common import (
     temporary_file_with_contents,
     write_file,
 )
+from conda_lock.constants.choices import CHOICES_KIND_NO_LOCK, CHOICES_VALIDATION_CHECKS
 from conda_lock.constants.filenames import DEFAULT_LOCKFILE_NAME, DEFAULT_SOURCE_FILES
 from conda_lock.errors import MissingEnvVarError, PlatformValidationError
 from conda_lock.install import do_conda_install
@@ -47,8 +48,8 @@ from conda_lock.lockfile import UnknownLockfileVersion, parse_conda_lock_file
 from conda_lock.lockfile.v2prelim.models import MetadataOption
 from conda_lock.lookup import set_lookup_location
 from conda_lock.render import do_render, render_lockfile_for_platform, run_lock
-from conda_lock.typing import TKindAll
-from conda_lock.validate import do_validate_platform
+from conda_lock.typing import TKindAll, TKindNoLock, TValidationCheck
+from conda_lock.validate import VALIDATION_CHECKS, do_validate_platform
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,19 @@ PKG_PATTERN = re.compile(r"(^[^#@].*|^# pip .*)")
 
 # Captures the domain in the third group.
 DOMAIN_PATTERN = re.compile(r"^(# pip .* @ )?(https?:\/\/)?([^\/]+)(.*)")
+
+_option_log_level = click.option(
+    "--log-level",
+    help="Log level.",
+    default="INFO",
+    show_default=True,
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+)
+_option_pdb = click.option(
+    "--pdb",
+    help="Drop into a postmortem debugger if conda-lock crashes",
+    is_flag=True,
+)
 
 
 @click.group(cls=OrderedGroup, default="lock", default_if_no_args=True)
@@ -179,15 +193,8 @@ TLogLevel = Union[
     default=False,
     help="Check existing input hashes in lockfiles before regenerating lock files.  If no files were updated exit with exit code 4.  Incompatible with --strip-auth",
 )
-@click.option(
-    "--log-level",
-    help="Log level.",
-    default="INFO",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-)
-@click.option(
-    "--pdb", is_flag=True, help="Drop into a postmortem debugger if conda-lock crashes"
-)
+@_option_log_level
+@_option_pdb
 @click.option(
     "--virtual-package-spec",
     type=click.Path(),
@@ -246,7 +253,7 @@ def lock(
     channel_overrides: List[str],
     dev_dependencies: bool,
     files: List[pathlib.Path],
-    kind: List[Union[Literal["lock"], Literal["env"], Literal["explicit"]]],
+    kind: List[TKindAll],
     filename_template: str,
     lockfile: PathLike,
     strip_auth: bool,
@@ -386,12 +393,7 @@ def lock(
     default=True,
     help="Whether the platform compatibility between your lockfile and the host system should be validated.",
 )
-@click.option(
-    "--log-level",
-    help="Log level.",
-    default="INFO",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-)
+@_option_log_level
 @click.option(
     "--dev/--no-dev",
     is_flag=True,
@@ -425,13 +427,13 @@ def install(
     dev: bool,
     extras: List[str],
 ) -> None:
+    """Perform a conda install"""
     # bail out if we do not encounter the lockfile
     lock_file = pathlib.Path(lock_file)
     if not lock_file.exists():
         print(ctx.get_help())
         sys.exit(1)
 
-    """Perform a conda install"""
     logging.basicConfig(level=log_level)
     _auth = (
         yaml.safe_load(auth) if auth else read_json(auth_file) if auth_file else None
@@ -458,6 +460,63 @@ def install(
             install_func(file=lockfile)
 
 
+@main.command("validate")
+@click.option(
+    "-c",
+    "--check",
+    default=["compatible"],
+    type=click.Choice(CHOICES_VALIDATION_CHECKS),
+    multiple=True,
+    show_default=True,
+    help="Type of check to perform.",
+)
+@_option_log_level
+@_option_pdb
+@click.argument("lock-file", default=DEFAULT_LOCKFILE_NAME)
+@click.pass_context
+def validate(
+    ctx: click.Context,
+    check: Sequence[TValidationCheck],
+    lock_file: PathLike,
+    log_level: TLogLevel,
+    pdb: bool,
+) -> None:
+    """Check if a lockfile agrees with its sources.
+
+    This command is meant to exit fast by avoiding a solve. It can do the following
+    checks:
+
+    \b
+        compatible: Check that the lock file is still compatible with its source files.
+        hash: Check that source files exactly match their content when the lock file was last updated.
+
+    The hash method is less reliable because partial lockfile updates are possible -
+    while the hash may match, the entire lockfile may not be based on the same source
+    file.
+    """
+    logging.basicConfig(level=log_level)
+
+    if pdb:
+        sys.excepthook = _handle_exception_post_mortem
+
+    lock_file = pathlib.Path(lock_file)
+    if not lock_file.exists():
+        print(f"Error: lockfile {lock_file} not found")
+        print(ctx.get_help())
+        sys.exit(1)
+
+    if not check:
+        print("Error: no checks requested.")
+        print(ctx.get_help())
+        sys.exit(1)
+
+    check_funcs = [
+        f for check_name, f in VALIDATION_CHECKS.items() if check_name in check
+    ]
+    for check_func in check_funcs:
+        check_func(lock_file)
+
+
 @main.command("render")
 @click.option(
     "--dev-dependencies/--no-dev-dependencies",
@@ -469,7 +528,7 @@ def install(
     "-k",
     "--kind",
     default=["explicit"],
-    type=click.Choice(["explicit", "env"]),
+    type=click.Choice(CHOICES_KIND_NO_LOCK),
     multiple=True,
     help="Kind of lock file(s) to generate.",
 )
@@ -486,15 +545,8 @@ def install(
     multiple=True,
     help="When used in conjunction with input sources that support extras (pyproject.toml) will add the deps from those extras to the input specification",
 )
-@click.option(
-    "--log-level",
-    help="Log level.",
-    default="INFO",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-)
-@click.option(
-    "--pdb", is_flag=True, help="Drop into a postmortem debugger if conda-lock crashes"
-)
+@_option_log_level
+@_option_pdb
 @click.option(
     "-p",
     "--platform",
@@ -506,7 +558,7 @@ def install(
 def render(
     ctx: click.Context,
     dev_dependencies: bool,
-    kind: Sequence[Union[Literal["env"], Literal["explicit"]]],
+    kind: Sequence[TKindNoLock],
     filename_template: str,
     extras: List[str],
     log_level: TLogLevel,
@@ -625,7 +677,7 @@ def _render_lockfile_for_install(
 
     """
     kind = _detect_lockfile_kind(pathlib.Path(filename))
-    if kind in ("explicit", "env"):
+    if kind in CHOICES_KIND_NO_LOCK:
         yield filename
         return
 
